@@ -1,68 +1,170 @@
-from datetime import date
-from typing import Iterator
-
-from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-
-import Utils
-from dataTypes.Song import Song
-from services.SongService import SongService
-
-baseURL = 'https://spotifycharts.com/regional/'
-#countryList = ['cl', 'co', 'ar', 'pe', 'pr', 'uy', 've', 'ec', 'pa', 'mx', 'hn', 'gt', 'cr', 'do', 'es']
-countryList = ['ec', 'pa', 'mx', 'hn', 'gt', 'cr', 'do', 'es']
-
-
-class SpotifyScrapper:
-
-    def requestAndObtainTopSongs(self, country: str, date: str, driver) -> Iterator[Song]:
-        driver.get(baseURL + '{}/daily/{}'.format(country, date))
-        delay = 20
-        try:
-            WebDriverWait(driver, delay).until(
-                EC.presence_of_element_located((By.CLASS_NAME, 'chart-table')))
-            generalDetails: BeautifulSoup = BeautifulSoup(driver.page_source, "html.parser")
-            songsList = generalDetails.find('table', {'class': 'chart-table'}) \
-                            .find_all('tr')[1:]
-            return map(
-                lambda songRaw: self.parseSong(songRaw, country, date),
-                songsList
-            )
-
-        except TimeoutException:
-            print("Loading took too much time!")
-            exit()
-
-    def parseSong(self, songRaw: BeautifulSoup, country: str, date: str) -> Song:
-        nameAndArtist = songRaw.find('td', {'class': 'chart-table-track'})
-        name = nameAndArtist.find('strong').getText() \
-            .replace("\"", "")\
-            .strip()
-        artist = nameAndArtist.find('span').getText()\
-            .replace("by", "")\
-            .replace("\"", "")\
-            .strip()
-        position = songRaw.find('td', {'class': 'chart-table-position'}).getText()
-        return Song(int(position), name, artist, date, country)
-
-
-if __name__ == '__main__':
-
-    dateRange = Utils.generateMonthlyDateRange(date(2019, 1, 1), date(2021, 8, 1))
-    driver = webdriver.Chrome(
-        executable_path=r'C:\\webdrivers\\chromedriver.exe'
-    )
-    songService = SongService()
-    for country in countryList:
-        for dateObj in dateRange:
-            songs = list(SpotifyScrapper().requestAndObtainTopSongs(
-                country,
-                dateObj.strftime("%Y-%m-%d"),
-                driver
-            ))
-            for song in songs:
-                songService.save(song)
+%Lectura del fichero donde se encuentran las canciones que formarán la base
+%de datos con la que trabajaremos.
+listing = dir('canciones');
+s = cell(length(listing),1);
+contador=0;
+M = containers.Map('KeyType','uint32','ValueType','any');
+for i=1:length(listing)
+if contains(listing(i).name,'.mp3')
+contador=contador+1;
+s{contador,1}=listing(i).name;
+end
+end
+s=s(~cellfun('isempty',s));
+for i=1:length(s)
+[y,fs]=audioread(strcat('canciones\',s{i,1}));
+yRs=audio_converter(y,fs);
+landmarks = getLandmarks(yRs);
+x=getTokens(landmarks,i,M);
+tokens=[tokens;x];
+fprintf("Numero de tokens encontrados para la cancion:\%d :\%d\n", i,length(x))
+;
+end
+function[yRs]=audio_converter(y,fs)
+[m,n]=size(y);
+if n==2
+yMono=0.5\*(y(:,1)+y(:,2));
+else
+yMono=y;
+end
+yRs=resample(yMono,8000,fs);
+end
+fs = 8000;
+tWindow = 64e-3;
+NWindow = fs*tWindow;
+window = hamming(NWindow);
+nfft=512;
+noverlap = NWindow/2;
+[S, F, T,P] = spectrogram(data_song,window,noverlap,nfft,fs);
+%S.Transformada Fourier a corto plazo.
+%F.Coordenada frecuencial.
+%T.Coordenada temporal.
+%P.Respuesta en magnitud.
+%% Preprocesador del espectograma, eliminando los picos pequeños y restando
+%la media.
+S=abs(S);
+Smax=max(S(:));
+S=10*log10(max(Smax/1e6,S));
+S = S - mean(S(:));
+% Filtro paso alto.
+S = (filter([1 -1],[1 -0.98],S')');
+%% Busqueda de maximos en el espectograma.
+%A partir del operador morfologico dilatado(max) encontraremos los puntos
+%que tras aplicar la máscara siguen manteniendo su valor, estos serán los
+%maximos a almacenar.
+mask= strel('rectangle',[20,20]);
+SDilated = imdilate(S,mask);
+[c_frecuencia, c_tiempo] = find(SDilated == S);
+%% Emparejamiento de maximos.
+%Comprobaremos para cada uno de los máximos obtenidos, si hay algún otro
+%máximo que cumpla con los requisitos de cercania en tiempo y frecuencia.
+landmarks=zeros(length(maxes)*3,4);
+c=0;
+for i=1:length(c_frecuencia)-1
+fini=c_frecuencia(i);
+tini=c_tiempo(i);
+[Y1,X1]=find((abs(c_frecuencia - fini) < 32) & ((c_tiempo - tini) > 0) & ((
+c_tiempo - tini) < 64), 10);
+%Obtenemos las coordenadas de los puntos emparejados y los almacenamos
+for j = 1:length(Y1)
+Landmarks = [tini, fini, c_frecuencia(Y1(j)) - fini, c_tiempo(Y1(j)) -
+tini];
+c = c+1;
+L(c,:) = Landmarks;
+end
+end
+for i = 1:length(L)
+tini = L(i,1);
+fini = L(i,2);
+fdelta = L(i,3);
+tdelta = L(i,4);
+hash = (fini)*2^12 + fdelta*2^6 + tdelta;
+tokens(i, :) = [id_song, tini, hash];
+end
+if id_song ~= 0
+%los hash serán los indices.
+index=tokens(:,3);
+ids_song = tokens(:,1);
+t_ini = tokens(:,2);
+for j=1:length(index)
+data=(ids_song(j))*TIMESIZE+t_ini(j);
+if M.isKey(index(j))
+%un mismo hash puede encontrarse a partir de dos canciones
+%diferentes, almacenaremos todos los encontrados
+%concatenandolos.
+M(index(j)) = [M(index(j)) uint32(data)];
+else
+M(index(j)) = uint32(data);
+end
+end
+end
+hashes = tokens_song(:,3);
+index=0;
+TIMESIZE=2^17;
+for i = 1:length(hashes)
+%EN la SIguiente condicion comprobamos que hashes de la cancion a
+%estudiar: hashes = tokens_song(:,3);
+%Existen en la base de datos.
+if(M.isKey(hashes(i)))
+%para obtener el valor asociado a la key(indice, en nuestro caso los
+%hashes: value=M(hashes(i))
+value=M(hashes(i));
+Lvalue=length(value);
+for j=1:Lvalue
+%sobre un mismo hash, puede tener mas de un valor asociado,
+%lo calculamos previamente y evaluamos.
+index=index+1;
+%Almacenaremos
+n_song=floor(value(j)/(TIMESIZE));
+%extraemos del value los datos como son el tini->deltaT.
+t=round(value(j)-n_song*TIMESIZE);
+dtime=t-tokens_song(i,2);
+matches(index, 1) = n_song;
+matches(index, 2) = abs(dtime);
+matches(index, 3) = hashes(i);
+end
+end
+end
+[y,fs]=audioread(strcat('canciones\',s{i,1}));
+yRs=audio_converter(y,fs);
+inicio_muestra= double(uint32(1 + (length(yRs)-20*(8000))*rand(
+numero_fragmentos,1)));
+muestra=yRs([inicio_muestra(j):inicio_muestra(j)+(duracion_fragmento*8000)]);
+muestra=awgn(muestra,noise,'measured');
+landmarks = getLandmarks(muestra);
+tokens_song=getTokens(landmarks,0,M);
+name=strcat('fragmentos\autogen_',int2str(j),'_',s{i,1});
+matches=getMatches(tokens_song,M);
+%Apartir del numero de coincidencias determinaremos que canción se
+%trata e imprimiremos el porcentaje de acierto.
+total_matches=length(matches);
+[posible_songs,position]=unique(matches(:,1),'first');
+[utime, xt] = unique(matches(:,2), 'first');
+position=[position; total_matches];
+c1=diff(position);
+[pos_descend,ids_songs]=sort(c1,'descend');
+song_match=[pos_descend,ids_songs];
+ntime = size(matches,1);
+utimecounts = diff([xt', ntime+1]);
+[sortedUTiC, UTiCindex] = sort(utimecounts,'descend');
+utime(UTiCindex(1));
+if length(pos_descend) > 2
+if pos_descend(1) > 1.25*pos_descend(2)
+fprintf("Resultado:Fragmento analizado: \%s .Canción encontrada:
+\%s. \n", name,erase(s{ids_songs(1)},".mp3"));
+%%%% Contador de verdaderos y falsos positivos:
+if contains(s{i,1},s{ids_songs(1)})
+positivos=positivos+1;
+else
+negativos=negativos+1;
+end
+else
+fprintf("Resultado:Fragmento analizado: \%s .No hay resultado
+concluyente.\n", name);
+negativos=negativos+1;
+end
+else
+fprintf("Resultado:Fragmento analizado: \%s .No hay resultado
+concluyente.\n", name);
+negativos=negativos+1;
+end
