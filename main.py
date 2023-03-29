@@ -1,69 +1,78 @@
-from datetime import date
-from typing import Iterator
+from PyQt5.QtWidgets import QMainWindow, QApplication,QLineEdit
+from PyQt5.QtGui import QGuiApplication,QIcon
+from PyQt5 import QtCore, QtWidgets
+from PyQt5.uic import loadUi 
+from PyQt5.QtCore import Qt
+import sys
 
-from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+class Login(QMainWindow):
+	def _init_(self):
+		super(Login, self)._init_()
+		loadUi('design.ui', self)
 
-import Utils
-from dataTypes.Song import Song
-from services.SongService import SongService
+		self.bt_normal.hide()
+		self.click_posicion = None
+		self.bt_minimize.clicked.connect(lambda :self.showMinimized())
+		self.bt_normal.clicked.connect(self.control_bt_normal)
+		self.bt_maximize.clicked.connect(self.control_bt_maximize)
+		self.bt_close.clicked.connect(lambda: self.close())
+           
+        # Eliminar barra de titulo y opacidad
+		self.setWindowFlag(QtCore.Qt.FramelessWindowHint)
+		self.setWindowOpacity(1)
+		self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
+		self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
 
-baseURL = 'https://spotifycharts.com/regional/'
-#countryList = ['cl', 'co', 'ar', 'pe', 'pr', 'uy', 've', 'ec', 'pa', 'mx', 'hn', 'gt', 'cr', 'do', 'es']
-countryList = ['ec', 'pa', 'mx', 'hn', 'gt', 'cr', 'do', 'es']
-
-
-class SpotifyScrapper:
-
-    def requestAndObtainTopSongs(self, country: str, date: str, driver) -> Iterator[Song]:
-        driver.get(baseURL + '{}/daily/{}'.format(country, date))
-        delay = 20
-        try:
-            WebDriverWait(driver, delay).until(
-                EC.presence_of_element_located((By.CLASS_NAME, 'chart-table')))
-            generalDetails: BeautifulSoup = BeautifulSoup(driver.page_source, "html.parser")
-            songsList = generalDetails.find('table', {'class': 'chart-table'}) \
-                            .find_all('tr')[1:]
-            return map(
-                lambda songRaw: self.parseSong(songRaw, country, date),
-                songsList
-            )
-
-        except TimeoutException:
-            print("Loading took too much time!")
-            exit()
-
-    def parseSong(self, songRaw: BeautifulSoup, country: str, date: str) -> Song:
-        nameAndArtist = songRaw.find('td', {'class': 'chart-table-track'})
-        name = nameAndArtist.find('strong').getText() \
-            .replace("\"", "")\
-            .strip()
-        artist = nameAndArtist.find('span').getText()\
-            .replace("by", "")\
-            .replace("\"", "")\
-            .strip()
-        position = songRaw.find('td', {'class': 'chart-table-position'}).getText()
-        return Song(int(position), name, artist, date, country)
+		# SizeGrip
+		self.gripSize = 10
+		self.grip = QtWidgets.QSizeGrip(self)
+		self.grip.resize(self.gripSize, self.gripSize)
+		# mover ventana
+		self.frame_superior.mouseMoveEvent = self.mover_ventana
 
 
-if __name__ == '__main__':
+		icon_user = QIcon("image/user.svg")
+		icon_lock = QIcon("image/lock.svg")
+		self.lineEdit1.addAction(icon_user, QLineEdit.LeadingPosition) #QLineEdit.TrailingPosition		
+		self.lineEdit2.addAction(icon_lock, QLineEdit.LeadingPosition) 
 
-    dateRange = Utils.generateMonthlyDateRange(date(2019, 1, 1), date(2021, 8, 1))
-    driver = webdriver.Chrome(
-        executable_path=r'C:\\webdrivers\\chromedriver.exe'
-    )
-    songService = SongService()
-    for country in countryList:
-        for dateObj in dateRange:
-            songs = list(SpotifyScrapper().requestAndObtainTopSongs(
-                country,
-                dateObj.strftime("%Y-%m-%d"),
-                driver
-            ))
-            for song in songs:
-                songService.save(song)
-                #ccccccccc
+
+	def  control_bt_normal(self): 
+	    self.showNormal()       
+	    self.bt_normal.hide()
+	    self.bt_maximize.show()
+
+	def  control_bt_maximize(self): 
+	    self.showMaximized()
+	    self.bt_maximize.hide()
+	    self.bt_normal.show()
+
+	## SizeGrip
+	def resizeEvent(self, event):
+	    rect = self.rect()
+	    self.grip.move(rect.right() - self.gripSize, rect.bottom() - self.gripSize)
+
+	## mover ventana
+	def mousePressEvent(self, event):
+	    self.click_posicion = event.globalPos()
+
+	def mover_ventana(self, event):
+	    if self.isMaximized() == False:         
+	        if event.buttons() == QtCore.Qt.LeftButton:
+	            self.move(self.pos() + event.globalPos() - self.click_posicion)
+	            self.click_posicion = event.globalPos()
+	            event.accept()
+	    if event.globalPos().y() <=5 or event.globalPos().x() <=5 :
+	        self.showMaximized()
+	        self.bt_maximize.hide()
+	        self.bt_normal.show()
+	    else:
+	        self.showNormal()
+	        self.bt_normal.hide()
+	        self.bt_maximize.show()
+	    
+if _name_ == '_main_':
+	app = QApplication(sys.argv)
+	my_app = Login()
+	my_app.show()
+	sys.exit(app.exec_())
